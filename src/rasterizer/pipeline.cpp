@@ -359,74 +359,56 @@ void Pipeline<p, P, flags>::rasterize_line(
 	// A1T2: rasterize_line
 
 	auto a = va.fb_position.xy();
-	auto b = vb.fb_position.xy();
-	auto az = va.fb_position.z, bz = vb.fb_position.z;
-	auto delta = (b - a).abs();
+    auto b = vb.fb_position.xy();
+    auto az = va.fb_position.z, bz = vb.fb_position.z;
+    auto delta = (b - a).abs();
 
-	auto i = delta.x > delta.y ? 0 : 1;
-    auto j = (i == 0) ? 1 : 0;
+    int i = delta.x > delta.y ? 0 : 1;
+    int j = (i == 0) ? 1 : 0;
 
-	if (a[i] > b[i]) {
-		std::swap(a, b);
-		std::swap(az, bz);
-	}
+    if (a[i] > b[i]) {
+        std::swap(a, b);
+        std::swap(az, bz);
+    }
 
-	auto is_inside_diamond = [](float x, float y) {
-		auto px = std::floor(x) + 0.5f;
-		auto py = std::floor(y) + 0.5f;
-		return std::abs(x - px) + std::abs(y - py) < 0.5f;
-	};
+    auto is_inside_diamond = [](float x, float y) {
+        return std::abs(x - std::floor(x) - 0.5f) + std::abs(y - std::floor(y) - 0.5f) < 0.5f;
+    };
 
-	auto make_and_emit_frag = [&](float x, float y) {
-		auto w = (x + 0.5f - a[i]) / (b[i] - a[i]);
-		auto z = az * (1 - w) + bz * w;
+    auto make_and_emit_frag = [&](float x, float y, float z) {
+        Fragment frag;
+        frag.fb_position = (i == 0) 
+            ? Vec3{std::floor(x) + 0.5f, std::floor(y) + 0.5f, z}
+            : Vec3{std::floor(y) + 0.5f, std::floor(x) + 0.5f, z};
+        frag.attributes = va.attributes;
+        frag.derivatives.fill(Vec2(0.0f, 0.0f));
+        emit_fragment(frag);
+    };
 
-		Fragment frag;
-		if (i != 0) {
-			frag.fb_position = Vec3{std::floor(y) + 0.5f, std::floor(x) + 0.5f, z};
-		} else {
-			frag.fb_position = Vec3{std::floor(x) + 0.5f, std::floor(y) + 0.5f, z};
-		}
-		frag.attributes = va.attributes;
-		frag.derivatives.fill(Vec2(0.0f, 0.0f));
-		emit_fragment(frag);
-	};
+    if (delta.x < 1 && delta.y < 1) {
+        if (!is_inside_diamond(b[i], b[j]) && is_inside_diamond(a[i], a[j])) {
+            make_and_emit_frag(a[i], a[j], az);
+        }
+        return;
+    }
 
-	if (delta.x < 1 && delta.y < 1) {
-		if (!is_inside_diamond(b[i], b[j]) && is_inside_diamond(a[i], a[j])) {
-			make_and_emit_frag(a[i], a[j]);
-		}
-		return;
-	}
+    auto interpolate = [&a, &b, i, j](float x) {
+        return ((x + 0.5f - a[i]) / (b[i] - a[i])) * (b[j] - a[j]) + a[j];
+    };
 
-	auto interpolate = [&a, &b, i, j](float x) {
-		auto w = (x + 0.5f - a[i]) / (b[i] - a[i]);
-		return w * (b[j] - a[j]) + a[j];
-	};
+    float t1 = std::ceil(a[i]);
+    float t2 = std::floor(b[i]);
 
-	auto t1 = std::ceil(a[i]), t2 = std::floor(b[i]);
+    make_and_emit_frag(a[i], interpolate(a[i]), az);
 
-	auto point1 = Vec2{a[i], a[j]};
-	auto point2 = Vec2{std::ceil(a[i]), interpolate(std::ceil(a[i]))};
-	if (!is_inside_diamond(point2.x, point2.y)) {
-		make_and_emit_frag(point1.x, point2.y);
-	}
+    for (float u = t1; u < t2; u++) {
+        float point_y = interpolate(u);
+        if (!is_inside_diamond(u, point_y)) {
+            make_and_emit_frag(u, point_y, az + (bz - az) * ((u + 0.5f - a[i]) / (b[i] - a[i])));
+        }
+    }
 
-	for (auto u = t1; u < t2; u++) {
-		point1 = Vec2{u, interpolate(u)};
-		point2 = Vec2{u + 1, interpolate(u)};
-		if (is_inside_diamond(point2.x, point2.y)) {
-			continue;
-		}
-
-		make_and_emit_frag(point1.x, point2.y);
-	}
-
-	point1 = Vec2{std::floor(b[i]), interpolate(std::floor(b[i]))};
-	point2 = Vec2{b[i], b[j]};
-	if (!is_inside_diamond(point2.x, point2.y)) {
-		make_and_emit_frag(point1.x, point2.y);
-	}
+    make_and_emit_frag(b[i], interpolate(b[i]), bz);
 }
 
 /*
