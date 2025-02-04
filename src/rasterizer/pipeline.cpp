@@ -358,25 +358,16 @@ void Pipeline<p, P, flags>::rasterize_line(
 	}
 	// A1T2: rasterize_line
 
-	// TODO: Check out the block comment above this function for more information on how to fill in
-	// this function!
-	// The OpenGL specification section 3.5 may also come in handy.
-
 	auto a = va.fb_position.xy();
 	auto b = vb.fb_position.xy();
 	auto az = va.fb_position.z, bz = vb.fb_position.z;
 	auto delta = (b - a).abs();
 
-	int i, j;
-	if (delta.x > delta.y) {
-		i = 0, j = 1;
-	} else {
-		i = 1, j = 0;
-	}
+	auto i = delta.x > delta.y ? 0 : 1;
+    auto j = (i == 0) ? 1 : 0;
 
 	if (a[i] > b[i]) {
-		std::swap(a.x, b.x);
-		std::swap(a.y, b.y);
+		std::swap(a, b);
 		std::swap(az, bz);
 	}
 
@@ -386,7 +377,7 @@ void Pipeline<p, P, flags>::rasterize_line(
 		return std::abs(x - px) + std::abs(y - py) < 0.5f;
 	};
 
-	auto make_and_emit_frag = [&a, &b, &va, i, &bz, &az, &emit_fragment](float x, float y) {
+	auto make_and_emit_frag = [&](float x, float y) {
 		auto w = (x + 0.5f - a[i]) / (b[i] - a[i]);
 		auto z = az * (1 - w) + bz * w;
 
