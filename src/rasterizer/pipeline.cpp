@@ -2,6 +2,7 @@
 #include "pipeline.h"
 
 #include <iostream>
+#include <cmath>
 
 #include "../lib/log.h"
 #include "../lib/mathlib.h"
@@ -411,6 +412,25 @@ void Pipeline<p, P, flags>::rasterize_line(
     make_and_emit_frag(b[i], interpolate(b[i]), bz);
 }
 
+class Block {
+public:
+    int x_min, x_max, y_min, y_max, level, max_level;
+
+    Block(int x_min, int x_max, int y_min, int y_max, int level, int max_level)
+        : x_min(x_min), x_max(x_max), y_min(y_min), y_max(y_max), level(level), max_level(max_level) {}
+
+    std::vector<Block> subdivide() {
+        int x_mid = (x_min + x_max) / 2;
+        int y_mid = (y_min + y_max) / 2;
+        return {
+            Block(x_min, x_mid, y_min, y_mid, level + 1, max_level),
+            Block(x_mid, x_max, y_min, y_mid, level + 1, max_level),
+            Block(x_min, x_mid, y_mid, y_max, level + 1, max_level),
+            Block(x_mid, x_max, y_mid, y_max, level + 1, max_level)
+        };
+    }
+};
+
 /*
  * rasterize_triangle(a,b,c,emit) calls 'emit(frag)' at every location
  *  	(x+0.5,y+0.5) (where x,y are integers) covered by triangle (a,b,c).
@@ -462,9 +482,170 @@ void Pipeline<p, P, flags>::rasterize_triangle(
 
 		// As a placeholder, here's code that draws some lines:
 		//(remove this and replace it with a real solution)
-		Pipeline<PrimitiveType::Lines, P, flags>::rasterize_line(va, vb, emit_fragment);
-		Pipeline<PrimitiveType::Lines, P, flags>::rasterize_line(vb, vc, emit_fragment);
-		Pipeline<PrimitiveType::Lines, P, flags>::rasterize_line(vc, va, emit_fragment);
+		// Pipeline<PrimitiveType::Lines, P, flags>::rasterize_line(va, vb, emit_fragment);
+		// Pipeline<PrimitiveType::Lines, P, flags>::rasterize_line(vb, vc, emit_fragment);
+		// Pipeline<PrimitiveType::Lines, P, flags>::rasterize_line(vc, va, emit_fragment);
+
+		int x_min = std::floor(std::min({va.fb_position.x, vb.fb_position.x, vc.fb_position.x}));
+		int x_max = std::ceil(std::max({va.fb_position.x, vb.fb_position.x, vc.fb_position.x}));
+		int y_min = std::floor(std::min({va.fb_position.y, vb.fb_position.y, vc.fb_position.y}));
+		int y_max = std::ceil(std::max({va.fb_position.y, vb.fb_position.y, vc.fb_position.y}));
+
+		auto sign = [](Vec2 p1, Vec2 p2, Vec2 p3) {
+			return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
+		};
+
+		auto is_point_in_triangle = [&va, &vb, &vc, &sign](Vec2 point) {
+			auto a = va.fb_position.xy();
+			auto b = vb.fb_position.xy();
+			auto c = vc.fb_position.xy();
+
+			auto d1 = sign(point, a, b);
+			auto d2 = sign(point, b, c);
+			auto d3 = sign(point, c, a);
+			bool has_neg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+    		bool has_pos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+
+			return !(has_neg && has_pos);
+		};
+
+		if ((x_max - x_min == 1) && (y_max - y_min == 1)) {
+			if (is_point_in_triangle(Vec2{static_cast<float>(x_min + 0.5f), static_cast<float>(y_min + 0.5f)})) {
+				Fragment frag;
+				frag.fb_position = Vec3{
+					x_min + 0.5f, 
+					y_min + 0.5f, 
+					va.fb_position.z
+				};
+				frag.attributes = va.attributes;
+				frag.derivatives.fill(Vec2(0.0f, 0.0f));
+				emit_fragment(frag);
+			}
+			return;
+		}
+
+		auto power_ceil = [](int n) {
+			n -= 1;
+			n |= n >> 1;
+			n |= n >> 2;
+			n |= n >> 4;
+			n |= n >> 8;
+			n |= n >> 16;
+			return n + 1;
+		};
+
+		auto is_power_of_2 = [](int n) {
+			return (n & (n - 1)) == 0;
+		};
+
+		if (!is_power_of_2(x_max - x_min)) {
+			auto n = power_ceil(x_max - x_min);
+			x_max = x_min + n;
+		}
+
+		if (!is_power_of_2(y_max - y_min)) {
+			auto n = power_ceil(y_max - y_min);
+			y_max = y_min + n;
+		}
+
+		if ((x_max - x_min) > (y_max - y_min)) {
+			y_max = y_min + x_max - x_min;
+		} else {
+			x_max = x_min + y_max - y_min;
+		}
+
+		auto is_segment_intersect = [&](const Vec2& a1, const Vec2& a2, const Vec2& b1, const Vec2& b2) {
+			float d1 = sign(b1, b2, a1);
+			float d2 = sign(b1, b2, a2);
+			float d3 = sign(a1, a2, b1);
+			float d4 = sign(a1, a2, b2);
+
+			return (d1 > 0.0f && d2 < 0.0f) || (d1 < 0.0f && d2 > 0.0f) ||
+				(d3 > 0.0f && d4 < 0.0f) || (d3 < 0.0f && d4 > 0.0f);
+		};
+
+		auto is_block_intersect_triangle = [&](Block block) {
+			std::vector<Vec2> block_edges = {
+				Vec2{block.x_min, block.y_min},
+				Vec2{block.x_max, block.y_min},
+				Vec2{block.x_max, block.y_min},
+				Vec2{block.x_max, block.y_max},
+				Vec2{block.x_max, block.y_max},
+				Vec2{block.x_min, block.y_max},
+				Vec2{block.x_min, block.y_max},
+				Vec2{block.x_min, block.y_min},
+			};
+			std::vector<Vec2> tri_edges = {va.fb_position.xy(), vb.fb_position.xy(), vb.fb_position.xy(), vc.fb_position.xy(), vc.fb_position.xy(), va.fb_position.xy()};
+
+			for (auto i = 0; i < block_edges.size(); i += 2) {
+				for (auto j = 0; j < tri_edges.size(); j += 2) {
+					if (is_segment_intersect(block_edges[i], block_edges[i + 1], tri_edges[j], tri_edges[j + 1])) {
+						return true;
+					}
+				}
+			}
+
+			return false;
+		};
+
+		auto is_early_in = [&](Block block) {
+			Vec2 corners[] = {
+				Vec2{static_cast<float>(block.x_min + 0.5f), static_cast<float>(block.y_min + 0.5f)},
+				Vec2{static_cast<float>(block.x_max + 0.5f), static_cast<float>(block.y_min + 0.5f)},
+				Vec2{static_cast<float>(block.x_max + 0.5f), static_cast<float>(block.y_max + 0.5f)},
+				Vec2{static_cast<float>(block.x_min + 0.5f), static_cast<float>(block.y_max + 0.5f)}
+			};
+			for (Vec2 corner : corners) {
+				if (!is_point_in_triangle(corner)) {
+					return false;
+				}
+			}
+			return true;
+		};
+
+		std::function<void(Block)> hierarchical_coverage;
+		hierarchical_coverage = [&](Block block) {
+			if (is_early_in(block)) {
+				for (auto x = block.x_min; x <= block.x_max; x += 1) {
+					for (auto y = block.y_min; y <= block.y_max; y += 1) {
+						Fragment frag;
+						frag.fb_position = Vec3{
+							x + 0.5f, 
+							y + 0.5f, 
+							va.fb_position.z
+						};
+						frag.attributes = va.attributes;
+						frag.derivatives.fill(Vec2(0.0f, 0.0f));
+						emit_fragment(frag);
+					}
+				}
+			} else if (is_block_intersect_triangle(block)) {
+				if (block.level < block.max_level) {
+					for (auto sub_block : block.subdivide()) {
+						hierarchical_coverage(sub_block);
+					}
+				} else {
+					auto px = block.x_min + 0.5f;
+					auto py = block.y_min + 0.5f;
+					if (is_point_in_triangle(Vec2{px, py})) {
+						Fragment frag;
+						frag.fb_position = Vec3{
+							px, 
+							py, 
+							va.fb_position.z
+						};
+						frag.attributes = va.attributes;
+						frag.derivatives.fill(Vec2(0.0f, 0.0f));
+						emit_fragment(frag);
+					}
+				}
+			}
+		};
+
+		Block root_block{x_min, x_max, y_min, y_max, 0, static_cast<int>(std::log2(x_max - x_min))};
+		for (auto sub_block : root_block.subdivide()) {
+			hierarchical_coverage(sub_block);
+		}
 	} else if constexpr ((flags & PipelineMask_Interp) == Pipeline_Interp_Smooth) {
 		// A1T5: screen-space smooth triangles
 		// TODO: rasterize triangle (see block comment above this function).
