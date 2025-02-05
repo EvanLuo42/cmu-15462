@@ -394,7 +394,7 @@ void Pipeline<p, P, flags>::rasterize_line(
     }
 
     auto interpolate = [&a, &b, i, j](float x) {
-        return ((x + 0.5f - a[i]) / (b[i] - a[i])) * (b[j] - a[j]) + a[j];
+		return ::lerp(a[j], b[j], (x + 0.5f - a[i]) / (b[i] - a[i]));
     };
 
     float t1 = std::ceil(a[i]);
