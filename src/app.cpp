@@ -2,14 +2,10 @@
 
 #include <SDL.h>
 #include <imgui/imgui.h>
-#include <imgui/imgui_impl_sdl.h>
 
 #include "app.h"
-#include "geometry/util.h"
 #include "platform/platform.h"
 #include "platform/renderer.h"
-#include "test.h"
-#include "scene/io.h"
 
 App::App(Launch_Settings set, Platform* plt)
 	: window_dim(plt ? plt->window_draw() : Vec2{1.0f}),
@@ -176,7 +172,8 @@ void App::event(SDL_Event e) {
 		if (IO.WantCaptureMouse) break;
 		gui_camera.mouse_radius(static_cast<float>(e.wheel.y));
 	} break;
-	}
+    default:;
+    }
 }
 
 void App::render() {

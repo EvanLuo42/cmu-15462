@@ -3,6 +3,7 @@
 
 #include <iostream>
 #include <cmath>
+#include <iterator>
 
 #include "../lib/log.h"
 #include "../lib/mathlib.h"
@@ -55,14 +56,14 @@ void Pipeline<primitive_type, Program, flags>::run(std::vector<Vertex> const& ve
 	//x: [-1,1] -> [0,width]
 	//y: [-1,1] -> [0,height]
 	//z: [-1,1] -> [0,1] (OpenGL-style depth range)
-	Vec3 const clip_to_fb_scale = Vec3{
-		framebuffer.width / 2.0f,
-		framebuffer.height / 2.0f,
+	auto  const clip_to_fb_scale = Vec3{
+		static_cast<float>(framebuffer.width) / 2.0f,
+		static_cast<float>(framebuffer.height) / 2.0f,
 		0.5f
 	};
-	Vec3 const clip_to_fb_offset = Vec3{
-		0.5f * framebuffer.width,
-		0.5f * framebuffer.height,
+	auto  const clip_to_fb_offset = Vec3{
+		0.5f * static_cast<float>(framebuffer.width),
+		0.5f * static_cast<float>(framebuffer.height),
 		0.5f
 	};
 
@@ -117,14 +118,14 @@ void Pipeline<primitive_type, Program, flags>::run(std::vector<Vertex> const& ve
 	for (auto const& f : fragments) {
 
 		// fragment location (in pixels):
-		int32_t x = (int32_t)std::floor(f.fb_position.x);
-		int32_t y = (int32_t)std::floor(f.fb_position.y);
+		const auto x = static_cast<int32_t>(std::floor(f.fb_position.x));
+		const auto y = static_cast<int32_t>(std::floor(f.fb_position.y));
 
 		// if clipping is working properly, this condition shouldn't be needed;
 		// however, it prevents crashes while you are working on your clipping functions,
 		// so we suggest leaving it in place:
-		if (x < 0 || (uint32_t)x >= framebuffer.width || 
-		    y < 0 || (uint32_t)y >= framebuffer.height) {
+		if (x < 0 || static_cast<uint32_t>(x) >= framebuffer.width ||
+		    y < 0 || static_cast<uint32_t>(y) >= framebuffer.height) {
 			++out_of_range;
 			continue;
 		}
@@ -234,7 +235,7 @@ void Pipeline<p, P, flags>::clip_line(ShadedVertex const& va, ShadedVertex const
 	// want to set range of t for a bunch of equations like:
 	//    a.x + t * ba.x <= a.w + t * ba.w
 	// so here's a helper:
-	auto clip_range = [&min_t, &max_t](float l, float dl, float r, float dr) {
+	auto clip_range = [&min_t, &max_t](const float l, const float dl, const float r, const float dr) {
 		// restrict range such that:
 		// l + t * dl <= r + t * dr
 		// re-arranging:
@@ -376,11 +377,11 @@ void Pipeline<p, P, flags>::rasterize_line(
         std::swap(az, bz);
     }
 
-    auto is_inside_diamond = [](float x, float y) {
+    auto is_inside_diamond = [](const float x, const float y) {
         return std::abs(x - std::floor(x) - 0.5f) + std::abs(y - std::floor(y) - 0.5f) < 0.5f;
     };
 
-    auto make_and_emit_frag = [&](float x, float y, float z) {
+    auto make_and_emit_frag = [&](const float x, const float y, const float z) {
         Fragment frag;
         frag.fb_position = (i == 0) 
             ? Vec3{std::floor(x) + 0.5f, std::floor(y) + 0.5f, z}
@@ -397,19 +398,18 @@ void Pipeline<p, P, flags>::rasterize_line(
         return;
     }
 
-    auto interpolate = [&a, &b, i, j](float x) {
+    auto interpolate = [&a, &b, i, j](const float x) {
 		return ::lerp(a[j], b[j], (x + 0.5f - a[i]) / (b[i] - a[i]));
     };
 
-    float t1 = std::ceil(a[i]);
-    float t2 = std::floor(b[i]);
+    const int t1 = std::ceil(a[i]);
+    const int t2 = std::floor(b[i]);
 
     make_and_emit_frag(a[i], interpolate(a[i]), az);
 
-    for (float u = t1; u < t2; u++) {
-        float point_y = interpolate(u);
-        if (!is_inside_diamond(u, point_y)) {
-            make_and_emit_frag(u, point_y, az + (bz - az) * ((u + 0.5f - a[i]) / (b[i] - a[i])));
+    for (int u = t1; u < t2; u += 1.0f) {
+        if (float point_y = interpolate(u);!is_inside_diamond(u, point_y)) {
+            make_and_emit_frag(u, point_y, az + (bz - az) * ((static_cast<float>(u) + 0.5f - a[i]) / (b[i] - a[i])));
         }
     }
 
@@ -420,12 +420,12 @@ class Block {
 public:
     int x_min, x_max, y_min, y_max, level, max_level;
 
-    Block(int x_min, int x_max, int y_min, int y_max, int level, int max_level)
+    Block(const int x_min, const int x_max, const int y_min, const int y_max, const int level, const int max_level)
         : x_min(x_min), x_max(x_max), y_min(y_min), y_max(y_max), level(level), max_level(max_level) {}
 
-    std::vector<Block> subdivide() {
-        int x_mid = (x_min + x_max) / 2;
-        int y_mid = (y_min + y_max) / 2;
+    [[nodiscard]] std::vector<Block> subdivide()const {
+        const int x_mid = (x_min + x_max) / 2;
+        const int y_mid = (y_min + y_max) / 2;
         return {
             Block(x_min, x_mid, y_min, y_mid, level + 1, max_level),
             Block(x_mid, x_max, y_min, y_mid, level + 1, max_level),
@@ -495,7 +495,7 @@ void Pipeline<p, P, flags>::rasterize_triangle(
 		int y_min = std::floor(std::min({va.fb_position.y, vb.fb_position.y, vc.fb_position.y}));
 		int y_max = std::ceil(std::max({va.fb_position.y, vb.fb_position.y, vc.fb_position.y}));
 
-		auto sign = [](Vec2 p1, Vec2 p2, Vec2 p3) {
+		auto sign = [](const Vec2 p1, const Vec2 p2, const Vec2 p3) {
 			return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y);
 		};
 
@@ -507,18 +507,18 @@ void Pipeline<p, P, flags>::rasterize_triangle(
 			auto d1 = sign(point, a, b);
 			auto d2 = sign(point, b, c);
 			auto d3 = sign(point, c, a);
-			bool has_neg = (d1 < 0) || (d2 < 0) || (d3 < 0);
-    		bool has_pos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+			const bool has_neg = d1 < 0 || d2 < 0 || d3 < 0;
+    		const bool has_pos = d1 > 0 || d2 > 0 || d3 > 0;
 
 			return !(has_neg && has_pos);
 		};
 
-		if ((x_max - x_min == 1) && (y_max - y_min == 1)) {
-			if (is_point_in_triangle(Vec2{static_cast<float>(x_min + 0.5f), static_cast<float>(y_min + 0.5f)})) {
+		if (x_max - x_min == 1 && y_max - y_min == 1) {
+			if (is_point_in_triangle(Vec2{(static_cast<float>(x_min) + 0.5f), (static_cast<float>(y_min) + 0.5f)})) {
 				Fragment frag;
 				frag.fb_position = Vec3{
-					x_min + 0.5f, 
-					y_min + 0.5f, 
+					static_cast<float>(x_min) + 0.5f,
+					static_cast<float>(y_min) + 0.5f,
 					va.fb_position.z
 				};
 				frag.attributes = va.attributes;
@@ -538,8 +538,8 @@ void Pipeline<p, P, flags>::rasterize_triangle(
 			return n + 1;
 		};
 
-		auto is_power_of_2 = [](int n) {
-			return (n & (n - 1)) == 0;
+		auto is_power_of_2 = [](const int n) {
+			return (n & n - 1) == 0;
 		};
 
 		if (!is_power_of_2(x_max - x_min)) {
@@ -552,24 +552,24 @@ void Pipeline<p, P, flags>::rasterize_triangle(
 			y_max = y_min + n;
 		}
 
-		if ((x_max - x_min) > (y_max - y_min)) {
+		if (x_max - x_min > y_max - y_min) {
 			y_max = y_min + x_max - x_min;
 		} else {
 			x_max = x_min + y_max - y_min;
 		}
 
 		auto is_segment_intersect = [&](const Vec2& a1, const Vec2& a2, const Vec2& b1, const Vec2& b2) {
-			float d1 = sign(b1, b2, a1);
-			float d2 = sign(b1, b2, a2);
-			float d3 = sign(a1, a2, b1);
-			float d4 = sign(a1, a2, b2);
+			const float d1 = sign(b1, b2, a1);
+			const float d2 = sign(b1, b2, a2);
+			const float d3 = sign(a1, a2, b1);
+			const float d4 = sign(a1, a2, b2);
 
 			return (d1 > 0.0f && d2 < 0.0f) || (d1 < 0.0f && d2 > 0.0f) ||
 				(d3 > 0.0f && d4 < 0.0f) || (d3 < 0.0f && d4 > 0.0f);
 		};
 
-		auto is_block_intersect_triangle = [&](Block block) {
-			std::vector<Vec2> block_edges = {
+		auto is_block_intersect_triangle = [&](const Block &block) {
+			const std::vector block_edges = {
 				Vec2{block.x_min, block.y_min},
 				Vec2{block.x_max, block.y_min},
 				Vec2{block.x_max, block.y_min},
@@ -579,7 +579,7 @@ void Pipeline<p, P, flags>::rasterize_triangle(
 				Vec2{block.x_min, block.y_max},
 				Vec2{block.x_min, block.y_min},
 			};
-			std::vector<Vec2> tri_edges = {va.fb_position.xy(), vb.fb_position.xy(), vb.fb_position.xy(), vc.fb_position.xy(), vc.fb_position.xy(), va.fb_position.xy()};
+			const std::vector<Vec2> tri_edges = {va.fb_position.xy(), vb.fb_position.xy(), vb.fb_position.xy(), vc.fb_position.xy(), vc.fb_position.xy(), va.fb_position.xy()};
 
 			for (auto i = 0; i < block_edges.size(); i += 2) {
 				for (auto j = 0; j < tri_edges.size(); j += 2) {
@@ -592,30 +592,27 @@ void Pipeline<p, P, flags>::rasterize_triangle(
 			return false;
 		};
 
-		auto is_early_in = [&](Block block) {
+		auto is_early_in = [&](const Block &block) {
 			Vec2 corners[] = {
-				Vec2{static_cast<float>(block.x_min + 0.5f), static_cast<float>(block.y_min + 0.5f)},
-				Vec2{static_cast<float>(block.x_max + 0.5f), static_cast<float>(block.y_min + 0.5f)},
-				Vec2{static_cast<float>(block.x_max + 0.5f), static_cast<float>(block.y_max + 0.5f)},
-				Vec2{static_cast<float>(block.x_min + 0.5f), static_cast<float>(block.y_max + 0.5f)}
+				Vec2{(static_cast<float>(block.x_min) + 0.5f), (static_cast<float>(block.y_min) + 0.5f)},
+				Vec2{(static_cast<float>(block.x_max) + 0.5f), (static_cast<float>(block.y_min) + 0.5f)},
+				Vec2{(static_cast<float>(block.x_max) + 0.5f), (static_cast<float>(block.y_max) + 0.5f)},
+				Vec2{(static_cast<float>(block.x_min) + 0.5f), (static_cast<float>(block.y_max) + 0.5f)}
 			};
-			for (Vec2 corner : corners) {
-				if (!is_point_in_triangle(corner)) {
-					return false;
-				}
-			}
-			return true;
+		    return std::all_of(std::begin(corners), std::end(corners), [&](const auto &corner) {
+		        return is_point_in_triangle(corner);
+		    });
 		};
 
 		std::function<void(Block)> hierarchical_coverage;
-		hierarchical_coverage = [&](Block block) {
+		hierarchical_coverage = [&](const Block &block) {
 			if (is_early_in(block)) {
 				for (auto x = block.x_min; x <= block.x_max; x += 1) {
 					for (auto y = block.y_min; y <= block.y_max; y += 1) {
 						Fragment frag;
 						frag.fb_position = Vec3{
-							x + 0.5f, 
-							y + 0.5f, 
+							static_cast<float>(x) + 0.5f,
+							static_cast<float>(y) + 0.5f,
 							va.fb_position.z
 						};
 						frag.attributes = va.attributes;
@@ -625,13 +622,12 @@ void Pipeline<p, P, flags>::rasterize_triangle(
 				}
 			} else if (is_block_intersect_triangle(block)) {
 				if (block.level < block.max_level) {
-					for (auto sub_block : block.subdivide()) {
+					for (const auto sub_block : block.subdivide()) {
 						hierarchical_coverage(sub_block);
 					}
 				} else {
-					auto px = block.x_min + 0.5f;
-					auto py = block.y_min + 0.5f;
-					if (is_point_in_triangle(Vec2{px, py})) {
+					const auto px = static_cast<float>(block.x_min) + 0.5f;
+					if (const auto py = static_cast<float>(block.y_min) + 0.5f; is_point_in_triangle(Vec2{px, py})) {
 						Fragment frag;
 						frag.fb_position = Vec3{
 							px, 
@@ -646,8 +642,8 @@ void Pipeline<p, P, flags>::rasterize_triangle(
 			}
 		};
 
-		Block root_block{x_min, x_max, y_min, y_max, 0, static_cast<int>(std::log2(x_max - x_min))};
-		for (auto sub_block : root_block.subdivide()) {
+		const Block root_block{x_min, x_max, y_min, y_max, 0, static_cast<int>(std::log2(x_max - x_min))};
+		for (const auto sub_block : root_block.subdivide()) {
 			hierarchical_coverage(sub_block);
 		}
 	} else if constexpr ((flags & PipelineMask_Interp) == Pipeline_Interp_Smooth) {
